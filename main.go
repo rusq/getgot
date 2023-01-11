@@ -2,15 +2,53 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
 	"github.com/mitchellh/go-ps"
+	"github.com/rusq/gotsr"
 )
 
+var stop = flag.Bool("stop", false, "stop the process")
+
 func main() {
+	flag.Parse()
+
+	p, err := gotsr.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *stop {
+		if err := p.Terminate(); err != nil {
+			if errors.Is(err, gotsr.ErrNotRunning) {
+				log.Println("not running")
+				return
+			}
+			log.Fatal(err)
+		}
+		log.Println("terminated")
+		return
+	}
+
+	child, err := p.TSR()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !child {
+		log.Println("starting getgot...")
+		return
+	}
+
+	f, err := os.OpenFile("getgot.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	log.SetOutput(f)
 	if err := run(context.Background()); err != nil {
 		log.Fatal(err)
 	}
