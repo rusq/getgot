@@ -33,6 +33,12 @@ func main() {
 		log.Println("terminated")
 		return
 	}
+	if running, err := p.IsRunning(); err != nil {
+		log.Fatal(err)
+	} else if running {
+		log.Println("already running")
+		return
+	}
 
 	child, err := p.TSR()
 	if err != nil {
