@@ -62,7 +62,7 @@ func main() {
 
 func run(ctx context.Context) error {
 	log.Println("get got started")
-	return supress(ctx, 5*time.Second, "du", "jamf")
+	return supress(ctx, 5*time.Second, "du", "jamf", "Nudge")
 }
 
 func supress(ctx context.Context, interval time.Duration, processes ...string) error {
