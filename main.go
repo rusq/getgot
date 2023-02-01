@@ -56,6 +56,9 @@ func main() {
 		log.Println("already running")
 		return
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.AtExit(func() { cancel() }) // cancel the context before the process exits
 
 	processes := strings.Split(*names, ",")
 	if len(processes) == 0 {
@@ -77,7 +80,7 @@ func main() {
 	}
 	defer f.Close()
 	log.SetOutput(f)
-	if err := supress(context.Background(), *interval, processes...); err != nil {
+	if err := supress(ctx, *interval, processes...); err != nil {
 		log.Fatal(err)
 	}
 }
