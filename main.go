@@ -7,16 +7,33 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mitchellh/go-ps"
 	"github.com/rusq/gotsr"
 )
 
-var stop = flag.Bool("stop", false, "stop the process")
+const (
+	defKillInterval = 5 * time.Second
+	defLogName      = "getgot.log"
+)
+
+var (
+	names    = flag.String("names", "jamf,Nudge,du", "comma separated list of process executable names to kill, case sensitive")
+	interval = flag.Duration("every", defKillInterval, "interval to check for processes")
+	logName  = flag.String("log", defLogName, "log file name")
+	stop     = flag.Bool("stop", false, "stop the getgot daemon")
+)
 
 func main() {
 	flag.Parse()
+	if *interval <= 0*time.Second {
+		*interval = defKillInterval
+	}
+	if *logName == "" {
+		*logName = defLogName
+	}
 
 	p, err := gotsr.New()
 	if err != nil {
@@ -40,6 +57,11 @@ func main() {
 		return
 	}
 
+	processes := strings.Split(*names, ",")
+	if len(processes) == 0 {
+		log.Fatal("no processes to kill, -names is empty")
+	}
+
 	child, err := p.TSR()
 	if err != nil {
 		log.Fatal(err)
@@ -49,25 +71,20 @@ func main() {
 		return
 	}
 
-	f, err := os.OpenFile("getgot.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	f, err := os.OpenFile(*logName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer f.Close()
 	log.SetOutput(f)
-	if err := run(context.Background()); err != nil {
+	if err := supress(context.Background(), *interval, processes...); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(ctx context.Context) error {
-	log.Println("get got started")
-	return supress(ctx, 5*time.Second, "du", "jamf", "Nudge")
-}
-
-func supress(ctx context.Context, interval time.Duration, processes ...string) error {
-	var pm = make(map[string]bool, len(processes))
-	for _, v := range processes {
+func supress(ctx context.Context, interval time.Duration, procNames ...string) error {
+	var pm = make(map[string]bool, len(procNames))
+	for _, v := range procNames {
 		pm[v] = true
 	}
 
@@ -105,7 +122,7 @@ func wipe(pm map[string]bool) error {
 		if err := proc.Kill(); err != nil {
 			return fmt.Errorf("failed to kill %s: %w", p.Executable(), err)
 		}
-		log.Printf("killed %s (%d) parent: %d", p.Executable(), p.Pid(), p.PPid())
+		log.Printf("killed %q: pid=%d, ppid=%d", p.Executable(), p.Pid(), p.PPid())
 	}
 	return nil
 }
