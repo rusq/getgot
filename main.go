@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -42,18 +43,18 @@ func main() {
 	if *stop {
 		if err := p.Terminate(); err != nil {
 			if errors.Is(err, gotsr.ErrNotRunning) {
-				log.Println("not running")
+				slog.Warn("not running")
 				return
 			}
 			log.Fatal(err)
 		}
-		log.Println("terminated")
+		slog.Info("terminated")
 		return
 	}
 	if running, err := p.IsRunning(); err != nil {
 		log.Fatal(err)
 	} else if running {
-		log.Println("already running")
+		slog.Warn("getgot already running")
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -70,11 +71,11 @@ func main() {
 		log.Fatal(err)
 	}
 	if !child {
-		log.Println("starting getgot...")
+		slog.Info("starting getgot...")
 		return
 	}
 
-	f, err := os.OpenFile(*logName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	f, err := os.OpenFile(*logName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func main() {
 }
 
 func supress(ctx context.Context, interval time.Duration, procNames ...string) error {
-	var pm = make(map[string]bool, len(procNames))
+	pm := make(map[string]bool, len(procNames))
 	for _, v := range procNames {
 		pm[v] = true
 	}
@@ -100,10 +101,9 @@ func supress(ctx context.Context, interval time.Duration, procNames ...string) e
 			return ctx.Err()
 		case <-ticker.C:
 			if err := wipe(pm); err != nil {
-				log.Println("wipe error:", err)
+				slog.Error("wipe", "error", err)
 			}
 		}
-
 	}
 }
 
@@ -111,7 +111,7 @@ func supress(ctx context.Context, interval time.Duration, procNames ...string) e
 func wipe(pm map[string]bool) error {
 	pp, err := ps.Processes()
 	if err != nil {
-		return err
+		return fmt.Errorf("error listing processes: %w", err)
 	}
 
 	for _, p := range pp {
@@ -120,12 +120,12 @@ func wipe(pm map[string]bool) error {
 		}
 		proc, err := os.FindProcess(p.Pid())
 		if err != nil {
-			return err
+			return fmt.Errorf("unable to find process %d: %w", p.Pid(), err)
 		}
 		if err := proc.Kill(); err != nil {
 			return fmt.Errorf("failed to kill %s: %w", p.Executable(), err)
 		}
-		log.Printf("killed %q: pid=%d, ppid=%d", p.Executable(), p.Pid(), p.PPid())
+		slog.Info("killed", "executable", p.Executable(), "pid", p.Pid(), "ppid", p.PPid())
 	}
 	return nil
 }
