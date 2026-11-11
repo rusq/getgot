@@ -201,13 +201,16 @@ func supress(ctx context.Context, interval time.Duration, procNames ...string) e
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	return suppressLoop(ctx, ticker.C, pm, wipe)
+}
 
+func suppressLoop(ctx context.Context, ticks <-chan time.Time, pm map[string]bool, wipeFn func(map[string]bool) error) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
-			if err := wipe(pm); err != nil {
+		case <-ticks:
+			if err := wipeFn(pm); err != nil {
 				slog.Error("wipe", "error", err)
 			}
 		}

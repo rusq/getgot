@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mitchellh/go-ps"
 )
@@ -294,6 +296,75 @@ func TestFileLogging(t *testing.T) {
 			t.Errorf("explicit log file permissions = %04o, want 0640", info.Mode().Perm())
 		}
 	})
+}
+
+func TestSuppressLoopLogsRecoverableWipeErrorAndContinues(t *testing.T) {
+	oldSlog := slog.Default()
+	oldLogWriter := log.Writer()
+	t.Cleanup(func() {
+		slog.SetDefault(oldSlog)
+		log.SetOutput(oldLogWriter)
+	})
+
+	filename := filepath.Join(t.TempDir(), defLogName)
+	f, logger, err := newFileLogger(filename, true)
+	if err != nil {
+		t.Fatalf("newFileLogger() unexpected error: %v", err)
+	}
+	defer f.Close()
+	installDefaultLogging(logger, f)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ticks := make(chan time.Time, 1)
+	wipeErr := errors.New("recoverable wipe failure")
+	wipeCalls := 0
+	sawTarget := false
+	done := make(chan error, 1)
+	go func() {
+		done <- suppressLoop(ctx, ticks, map[string]bool{"target": true}, func(pm map[string]bool) error {
+			wipeCalls++
+			sawTarget = pm["target"]
+			return wipeErr
+		})
+	}()
+	ticks <- time.Now()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		data, readErr := os.ReadFile(filename)
+		if readErr != nil {
+			t.Fatalf("read configured log: %v", readErr)
+		}
+		if strings.Contains(string(data), wipeErr.Error()) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("configured log never contained recoverable wipe error: %q", data)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	select {
+	case err := <-done:
+		t.Fatalf("suppressLoop() returned before cancellation: %v", err)
+	default:
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("suppressLoop() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("suppressLoop() did not return after cancellation")
+	}
+	if wipeCalls != 1 {
+		t.Errorf("wipe calls = %d, want 1", wipeCalls)
+	}
+	if !sawTarget {
+		t.Error("suppressLoop() process map did not contain target")
+	}
 }
 
 func TestStatePIDFile(t *testing.T) {
