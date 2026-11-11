@@ -1,4 +1,4 @@
 github.com/mitchellh/go-ps v1.0.0 h1:i6ampVEEF4wQFF+bkYfwYgY+F/uYJDktmvLPf7qIgjc=
 github.com/mitchellh/go-ps v1.0.0/go.mod h1:J4lOc8z8yJs6vUwklHw2XEIiT4z4C40KtWVN3nvg8Pg=
-github.com/rusq/gotsr v0.1.0 h1:3znZxR4JWGjXAdWZ99pHxpy7X/yekohFN+hPW5nrBdo=
-github.com/rusq/gotsr v0.1.0/go.mod h1:5RMEtnUWwvrih3HBj8THDyGqpW6F6XHjRAZP4/c4PTk=
+github.com/rusq/gotsr v0.1.1-0.20261111021147-f63662c7c025 h1:tZPrCVnqmrBvM3/5vIeKCWC3xpFiK8g9UkxRxIEh0Kg=
+github.com/rusq/gotsr v0.1.1-0.20261111021147-f63662c7c025/go.mod h1:5RMEtnUWwvrih3HBj8THDyGqpW6F6XHjRAZP4/c4PTk=
