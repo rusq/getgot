@@ -17,10 +17,12 @@ import (
 )
 
 const (
-	defKillInterval = 5 * time.Second
-	defLogName      = "getgot.log"
-	stateDirName    = "getgot"
-	pidFileName     = "getgot.pid"
+	defKillInterval  = 5 * time.Second
+	defLogName       = "getgot.log"
+	stateDirName     = "getgot"
+	pidFileName      = "getgot.pid"
+	startupLogEvent  = "getgot started"
+	shutdownLogEvent = "getgot stopping"
 )
 
 var (
@@ -43,6 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	selectedLogFile, privateLog := selectLogFile(*logName, filepath.Dir(pidFile))
 	p, err := gotsr.New(gotsr.WithPIDFile(pidFile))
 	if err != nil {
 		log.Fatal(err)
@@ -64,14 +67,21 @@ func main() {
 		slog.Warn("getgot already running")
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	p.AtExit(func() { cancel() }) // cancel the context before the process exits
 
 	processes, err := parseProcessNames(*names)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	f, daemonLogger, err := newFileLogger(selectedLogFile, privateLog)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.AtExit(daemonAtExit(cancel, daemonLogger, f))
 
 	child, err := p.TSR()
 	if err != nil {
@@ -82,12 +92,10 @@ func main() {
 		return
 	}
 
-	f, err := os.OpenFile(*logName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
+	installDefaultLogging(daemonLogger, f)
+	if err := logLifecycleEvent(daemonLogger, startupLogEvent, f); err != nil {
 		log.Fatal(err)
 	}
-	defer f.Close()
-	log.SetOutput(f)
 	if err := supress(ctx, *interval, processes...); err != nil {
 		log.Fatal(err)
 	}
@@ -110,6 +118,52 @@ func statePIDFile(userConfigDir func() (string, error)) (string, error) {
 		return "", fmt.Errorf("secure state directory %q: %w", stateDir, err)
 	}
 	return filepath.Join(stateDir, pidFileName), nil
+}
+
+func selectLogFile(configured, stateDir string) (filename string, private bool) {
+	if configured == "" || configured == defLogName {
+		return filepath.Join(stateDir, defLogName), true
+	}
+	return configured, false
+}
+
+func newFileLogger(filename string, private bool) (*os.File, *slog.Logger, error) {
+	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open log file %q: %w", filename, err)
+	}
+	if private {
+		if err := f.Chmod(0o600); err != nil {
+			_ = f.Close()
+			return nil, nil, fmt.Errorf("secure log file %q: %w", filename, err)
+		}
+	}
+	return f, slog.New(slog.NewTextHandler(f, nil)), nil
+}
+
+func installDefaultLogging(logger *slog.Logger, f *os.File) {
+	slog.SetDefault(logger)
+	log.SetOutput(f)
+}
+
+func logLifecycleEvent(logger *slog.Logger, message string, f *os.File) error {
+	logger.Info(message)
+	if f == nil {
+		return nil
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync log after %q: %w", message, err)
+	}
+	return nil
+}
+
+func daemonAtExit(cancel context.CancelFunc, logger *slog.Logger, logFile *os.File) func() {
+	return func() {
+		if err := logLifecycleEvent(logger, shutdownLogEvent, logFile); err != nil {
+			logger.Error("shutdown log", "error", err)
+		}
+		cancel()
+	}
 }
 
 func parseProcessNames(value string) ([]string, error) {

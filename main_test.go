@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +15,267 @@ import (
 
 	"github.com/mitchellh/go-ps"
 )
+
+func TestNewFileLoggerDoesNotInstallDefaults(t *testing.T) {
+	oldSlog := slog.Default()
+	oldLogWriter := log.Writer()
+	t.Cleanup(func() {
+		slog.SetDefault(oldSlog)
+		log.SetOutput(oldLogWriter)
+	})
+
+	var structuredTerminal, legacyTerminal bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&structuredTerminal, nil)))
+	log.SetOutput(&legacyTerminal)
+
+	filename := filepath.Join(t.TempDir(), defLogName)
+	f, daemonLogger, err := newFileLogger(filename, true)
+	if err != nil {
+		t.Fatalf("newFileLogger() unexpected error: %v", err)
+	}
+	defer f.Close()
+
+	slog.Info("foreground structured")
+	log.Print("foreground legacy")
+	if err := f.Sync(); err != nil {
+		t.Fatalf("sync daemon log: %v", err)
+	}
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatalf("read daemon log: %v", err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("daemon log contains foreground output before installation: %q", data)
+	}
+	if !strings.Contains(structuredTerminal.String(), "foreground structured") {
+		t.Errorf("structured foreground output = %q", structuredTerminal.String())
+	}
+	if !strings.Contains(legacyTerminal.String(), "foreground legacy") {
+		t.Errorf("legacy foreground output = %q", legacyTerminal.String())
+	}
+
+	daemonLogger.Info("dedicated daemon event")
+	if err := f.Sync(); err != nil {
+		t.Fatalf("sync dedicated daemon event: %v", err)
+	}
+	data, err = os.ReadFile(filename)
+	if err != nil {
+		t.Fatalf("read daemon log: %v", err)
+	}
+	if !strings.Contains(string(data), "dedicated daemon event") {
+		t.Errorf("daemon log = %q, want dedicated event", data)
+	}
+}
+
+func TestDaemonLifecycleLogging(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), defLogName)
+	f, logger, err := newFileLogger(filename, true)
+	if err != nil {
+		t.Fatalf("newFileLogger() unexpected error: %v", err)
+	}
+	defer f.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := logLifecycleEvent(logger, startupLogEvent, f); err != nil {
+		t.Fatalf("log startup event: %v", err)
+	}
+	daemonAtExit(cancel, logger, f)()
+
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("daemonAtExit() did not cancel the daemon context")
+	}
+
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatalf("read lifecycle log: %v", err)
+	}
+	contents := string(data)
+	for _, event := range []string{startupLogEvent, shutdownLogEvent} {
+		if count := strings.Count(contents, `msg="`+event+`"`); count != 1 {
+			t.Errorf("lifecycle log contains %q %d times, want exactly once: %q", event, count, contents)
+		}
+	}
+}
+
+func TestDaemonAtExitCancelsAfterLogSyncFailure(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), defLogName)
+	f, logger, err := newFileLogger(filename, true)
+	if err != nil {
+		t.Fatalf("newFileLogger() unexpected error: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close log file: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	daemonAtExit(cancel, logger, f)()
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("daemonAtExit() did not cancel after the log sync failed")
+	}
+}
+
+func TestSelectLogFile(t *testing.T) {
+	stateDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		configured  string
+		want        string
+		wantPrivate bool
+	}{
+		{
+			name:        "default",
+			configured:  defLogName,
+			want:        filepath.Join(stateDir, defLogName),
+			wantPrivate: true,
+		},
+		{
+			name:        "empty uses default",
+			configured:  "",
+			want:        filepath.Join(stateDir, defLogName),
+			wantPrivate: true,
+		},
+		{
+			name:       "explicit relative path",
+			configured: filepath.Join("logs", "custom.log"),
+			want:       filepath.Join("logs", "custom.log"),
+		},
+		{
+			name:       "explicit absolute path",
+			configured: filepath.Join(stateDir, "custom.log"),
+			want:       filepath.Join(stateDir, "custom.log"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, private := selectLogFile(tt.configured, stateDir)
+			if got != tt.want || private != tt.wantPrivate {
+				t.Fatalf("selectLogFile(%q, %q) = %q, %t, want %q, %t", tt.configured, stateDir, got, private, tt.want, tt.wantPrivate)
+			}
+			if tt.wantPrivate && !filepath.IsAbs(got) {
+				t.Errorf("selectLogFile() default = %q, want an absolute path", got)
+			}
+		})
+	}
+}
+
+func TestFileLogging(t *testing.T) {
+	oldSlog := slog.Default()
+	oldLogWriter := log.Writer()
+	t.Cleanup(func() {
+		slog.SetDefault(oldSlog)
+		log.SetOutput(oldLogWriter)
+	})
+
+	t.Run("routes structured and legacy messages", func(t *testing.T) {
+		filename := filepath.Join(t.TempDir(), defLogName)
+		f, logger, err := newFileLogger(filename, true)
+		if err != nil {
+			t.Fatalf("newFileLogger() unexpected error: %v", err)
+		}
+		defer f.Close()
+		installDefaultLogging(logger, f)
+
+		slog.Info("structured message", "answer", 42)
+		log.Print("legacy message")
+		if err := f.Sync(); err != nil {
+			t.Fatalf("sync log file: %v", err)
+		}
+
+		data, err := os.ReadFile(filename)
+		if err != nil {
+			t.Fatalf("read log file: %v", err)
+		}
+		contents := string(data)
+		for _, want := range []string{"structured message", "answer=42", "legacy message"} {
+			if !strings.Contains(contents, want) {
+				t.Errorf("log contents = %q, want %q", contents, want)
+			}
+		}
+	})
+
+	t.Run("creates private file", func(t *testing.T) {
+		filename := filepath.Join(t.TempDir(), defLogName)
+		f, _, err := newFileLogger(filename, true)
+		if err != nil {
+			t.Fatalf("newFileLogger() unexpected error: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close log file: %v", err)
+		}
+		if runtime.GOOS == "windows" {
+			return
+		}
+		info, err := os.Stat(filename)
+		if err != nil {
+			t.Fatalf("stat log file: %v", err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("log file permissions = %04o, want 0600", info.Mode().Perm())
+		}
+	})
+
+	t.Run("hardens existing default file", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows does not implement Unix permission bits")
+		}
+		filename := filepath.Join(t.TempDir(), defLogName)
+		if err := os.WriteFile(filename, nil, 0o644); err != nil {
+			t.Fatalf("create permissive log file: %v", err)
+		}
+		if err := os.Chmod(filename, 0o644); err != nil {
+			t.Fatalf("set permissive log file mode: %v", err)
+		}
+
+		f, _, err := newFileLogger(filename, true)
+		if err != nil {
+			t.Fatalf("newFileLogger() unexpected error: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close log file: %v", err)
+		}
+		info, err := os.Stat(filename)
+		if err != nil {
+			t.Fatalf("stat log file: %v", err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("log file permissions = %04o, want 0600", info.Mode().Perm())
+		}
+	})
+
+	t.Run("preserves existing explicit file permissions", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows does not implement Unix permission bits")
+		}
+		filename := filepath.Join(t.TempDir(), "custom.log")
+		if err := os.WriteFile(filename, nil, 0o640); err != nil {
+			t.Fatalf("create custom log file: %v", err)
+		}
+		if err := os.Chmod(filename, 0o640); err != nil {
+			t.Fatalf("set custom log file mode: %v", err)
+		}
+
+		f, _, err := newFileLogger(filename, false)
+		if err != nil {
+			t.Fatalf("newFileLogger() unexpected error: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close log file: %v", err)
+		}
+		info, err := os.Stat(filename)
+		if err != nil {
+			t.Fatalf("stat log file: %v", err)
+		}
+		if info.Mode().Perm() != 0o640 {
+			t.Errorf("explicit log file permissions = %04o, want 0640", info.Mode().Perm())
+		}
+	})
+}
 
 func TestStatePIDFile(t *testing.T) {
 	t.Run("stable absolute path across working directories", func(t *testing.T) {
