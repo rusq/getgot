@@ -79,9 +79,8 @@ func main() {
 	}
 	defer f.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	p.AtExit(daemonAtExit(cancel, daemonLogger, f))
+	ctx := context.Background()
+	p.AtExit(daemonAtExit(daemonLogger, f))
 
 	child, err := p.TSR()
 	if err != nil {
@@ -94,7 +93,7 @@ func main() {
 
 	installDefaultLogging(daemonLogger, f)
 	if err := logLifecycleEvent(daemonLogger, startupLogEvent, f); err != nil {
-		log.Fatal(err)
+		log.Fatal(closeAfterStartupFailure(p, err))
 	}
 	if err := supress(ctx, *interval, processes...); err != nil {
 		log.Fatal(err)
@@ -157,13 +156,23 @@ func logLifecycleEvent(logger *slog.Logger, message string, f *os.File) error {
 	return nil
 }
 
-func daemonAtExit(cancel context.CancelFunc, logger *slog.Logger, logFile *os.File) func() {
+func daemonAtExit(logger *slog.Logger, logFile *os.File) func() {
 	return func() {
 		if err := logLifecycleEvent(logger, shutdownLogEvent, logFile); err != nil {
 			logger.Error("shutdown log", "error", err)
 		}
-		cancel()
 	}
+}
+
+type runtimeCloser interface {
+	Close() error
+}
+
+func closeAfterStartupFailure(closer runtimeCloser, startupErr error) error {
+	if err := closer.Close(); err != nil {
+		return errors.Join(startupErr, fmt.Errorf("close daemon runtime after startup log failure: %w", err))
+	}
+	return startupErr
 }
 
 func parseProcessNames(value string) ([]string, error) {

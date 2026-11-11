@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"log"
 	"log/slog"
@@ -75,17 +74,10 @@ func TestDaemonLifecycleLogging(t *testing.T) {
 	}
 	defer f.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
 	if err := logLifecycleEvent(logger, startupLogEvent, f); err != nil {
 		t.Fatalf("log startup event: %v", err)
 	}
-	daemonAtExit(cancel, logger, f)()
-
-	select {
-	case <-ctx.Done():
-	default:
-		t.Fatal("daemonAtExit() did not cancel the daemon context")
-	}
+	daemonAtExit(logger, f)()
 
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -99,22 +91,49 @@ func TestDaemonLifecycleLogging(t *testing.T) {
 	}
 }
 
-func TestDaemonAtExitCancelsAfterLogSyncFailure(t *testing.T) {
-	filename := filepath.Join(t.TempDir(), defLogName)
-	f, logger, err := newFileLogger(filename, true)
-	if err != nil {
-		t.Fatalf("newFileLogger() unexpected error: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("close log file: %v", err)
+type fakeRuntimeCloser struct {
+	called bool
+	err    error
+}
+
+func (c *fakeRuntimeCloser) Close() error {
+	c.called = true
+	return c.err
+}
+
+func TestCloseAfterStartupFailure(t *testing.T) {
+	startupErr := errors.New("startup log sync failed")
+	closeErr := errors.New("runtime close failed")
+
+	tests := []struct {
+		name     string
+		closeErr error
+		wantErrs []error
+	}{
+		{
+			name:     "runtime closes",
+			wantErrs: []error{startupErr},
+		},
+		{
+			name:     "close failure is preserved",
+			closeErr: closeErr,
+			wantErrs: []error{startupErr, closeErr},
+		},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	daemonAtExit(cancel, logger, f)()
-	select {
-	case <-ctx.Done():
-	default:
-		t.Fatal("daemonAtExit() did not cancel after the log sync failed")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			closer := &fakeRuntimeCloser{err: tt.closeErr}
+			err := closeAfterStartupFailure(closer, startupErr)
+			if !closer.called {
+				t.Fatal("closeAfterStartupFailure() did not close the daemon runtime")
+			}
+			for _, wantErr := range tt.wantErrs {
+				if !errors.Is(err, wantErr) {
+					t.Errorf("closeAfterStartupFailure() error = %v, want errors.Is(_, %v)", err, wantErr)
+				}
+			}
+		})
 	}
 }
 
