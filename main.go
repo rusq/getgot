@@ -127,23 +127,38 @@ func supress(ctx context.Context, interval time.Duration, procNames ...string) e
 
 // wipe kills all processes in the pm map
 func wipe(pm map[string]bool) error {
-	pp, err := ps.Processes()
+	return wipeProcesses(pm, ps.Processes, findProcess)
+}
+
+type processKiller interface {
+	Kill() error
+}
+
+func findProcess(pid int) (processKiller, error) {
+	return os.FindProcess(pid)
+}
+
+func wipeProcesses(pm map[string]bool, list func() ([]ps.Process, error), find func(int) (processKiller, error)) error {
+	pp, err := list()
 	if err != nil {
 		return fmt.Errorf("error listing processes: %w", err)
 	}
 
+	var errs []error
 	for _, p := range pp {
 		if _, ok := pm[p.Executable()]; !ok {
 			continue
 		}
-		proc, err := os.FindProcess(p.Pid())
+		proc, err := find(p.Pid())
 		if err != nil {
-			return fmt.Errorf("unable to find process %d: %w", p.Pid(), err)
+			errs = append(errs, fmt.Errorf("unable to find process %d: %w", p.Pid(), err))
+			continue
 		}
 		if err := proc.Kill(); err != nil {
-			return fmt.Errorf("failed to kill %s: %w", p.Executable(), err)
+			errs = append(errs, fmt.Errorf("failed to kill %s (PID %d): %w", p.Executable(), p.Pid(), err))
+			continue
 		}
 		slog.Info("killed", "executable", p.Executable(), "pid", p.Pid(), "ppid", p.PPid())
 	}
-	return nil
+	return errors.Join(errs...)
 }
