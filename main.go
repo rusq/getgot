@@ -61,9 +61,9 @@ func main() {
 	defer cancel()
 	p.AtExit(func() { cancel() }) // cancel the context before the process exits
 
-	processes := strings.Split(*names, ",")
-	if len(processes) == 0 {
-		log.Fatal("no processes to kill, -names is empty")
+	processes, err := parseProcessNames(*names)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	child, err := p.TSR()
@@ -84,6 +84,24 @@ func main() {
 	if err := supress(ctx, *interval, processes...); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func parseProcessNames(value string) ([]string, error) {
+	parts := strings.Split(value, ",")
+	processes := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for i, part := range parts {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			return nil, fmt.Errorf("process name %d is empty", i+1)
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		processes = append(processes, name)
+	}
+	return processes, nil
 }
 
 func supress(ctx context.Context, interval time.Duration, procNames ...string) error {
