@@ -2,12 +2,102 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/mitchellh/go-ps"
 )
+
+func TestStatePIDFile(t *testing.T) {
+	t.Run("stable absolute path across working directories", func(t *testing.T) {
+		baseDir := t.TempDir()
+		lookup := func() (string, error) { return baseDir, nil }
+
+		firstWorkingDir := t.TempDir()
+		secondWorkingDir := t.TempDir()
+		t.Chdir(firstWorkingDir)
+		first, err := statePIDFile(lookup)
+		if err != nil {
+			t.Fatalf("statePIDFile() first call: %v", err)
+		}
+		t.Chdir(secondWorkingDir)
+		second, err := statePIDFile(lookup)
+		if err != nil {
+			t.Fatalf("statePIDFile() second call: %v", err)
+		}
+
+		want := filepath.Join(baseDir, stateDirName, pidFileName)
+		if first != want || second != want {
+			t.Fatalf("statePIDFile() paths = %q, %q, want %q", first, second, want)
+		}
+		if !filepath.IsAbs(first) {
+			t.Errorf("statePIDFile() = %q, want an absolute path", first)
+		}
+	})
+
+	t.Run("creates private state directory", func(t *testing.T) {
+		baseDir := t.TempDir()
+		got, err := statePIDFile(func() (string, error) { return baseDir, nil })
+		if err != nil {
+			t.Fatalf("statePIDFile() unexpected error: %v", err)
+		}
+		stateDir := filepath.Dir(got)
+		info, err := os.Stat(stateDir)
+		if err != nil {
+			t.Fatalf("stat state directory: %v", err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("state path %q is not a directory", stateDir)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+			t.Errorf("state directory permissions = %04o, want 0700", info.Mode().Perm())
+		}
+	})
+
+	t.Run("hardens existing state directory", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows does not implement Unix permission bits")
+		}
+		baseDir := t.TempDir()
+		stateDir := filepath.Join(baseDir, stateDirName)
+		if err := os.Mkdir(stateDir, 0o755); err != nil {
+			t.Fatalf("create permissive state directory: %v", err)
+		}
+		if err := os.Chmod(stateDir, 0o755); err != nil {
+			t.Fatalf("set permissive state directory mode: %v", err)
+		}
+
+		if _, err := statePIDFile(func() (string, error) { return baseDir, nil }); err != nil {
+			t.Fatalf("statePIDFile() unexpected error: %v", err)
+		}
+		info, err := os.Stat(stateDir)
+		if err != nil {
+			t.Fatalf("stat state directory: %v", err)
+		}
+		if info.Mode().Perm() != 0o700 {
+			t.Errorf("state directory permissions = %04o, want 0700", info.Mode().Perm())
+		}
+	})
+
+	t.Run("returns config lookup error", func(t *testing.T) {
+		lookupErr := errors.New("lookup failed")
+		_, err := statePIDFile(func() (string, error) { return "", lookupErr })
+		if !errors.Is(err, lookupErr) {
+			t.Fatalf("statePIDFile() error = %v, want errors.Is(_, %v)", err, lookupErr)
+		}
+	})
+
+	t.Run("rejects relative config directory", func(t *testing.T) {
+		_, err := statePIDFile(func() (string, error) { return "relative", nil })
+		if err == nil || !strings.Contains(err.Error(), "not absolute") {
+			t.Fatalf("statePIDFile() error = %v, want relative-path error", err)
+		}
+	})
+}
 
 func TestParseProcessNames(t *testing.T) {
 	tests := []struct {

@@ -8,6 +8,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 const (
 	defKillInterval = 5 * time.Second
 	defLogName      = "getgot.log"
+	stateDirName    = "getgot"
+	pidFileName     = "getgot.pid"
 )
 
 var (
@@ -36,7 +39,11 @@ func main() {
 		*logName = defLogName
 	}
 
-	p, err := gotsr.New()
+	pidFile, err := statePIDFile(os.UserConfigDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	p, err := gotsr.New(gotsr.WithPIDFile(pidFile))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -84,6 +91,25 @@ func main() {
 	if err := supress(ctx, *interval, processes...); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func statePIDFile(userConfigDir func() (string, error)) (string, error) {
+	baseDir, err := userConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("find user config directory: %w", err)
+	}
+	if !filepath.IsAbs(baseDir) {
+		return "", fmt.Errorf("user config directory %q is not absolute", baseDir)
+	}
+
+	stateDir := filepath.Join(baseDir, stateDirName)
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return "", fmt.Errorf("create state directory %q: %w", stateDir, err)
+	}
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		return "", fmt.Errorf("secure state directory %q: %w", stateDir, err)
+	}
+	return filepath.Join(stateDir, pidFileName), nil
 }
 
 func parseProcessNames(value string) ([]string, error) {
