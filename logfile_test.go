@@ -86,8 +86,14 @@ func TestOpenLog(t *testing.T) {
 }
 
 func TestSetLogOutput(t *testing.T) {
-	old := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(old) })
+	// slog.SetDefault redirects the log package, and restoring the default
+	// slog logger does not undo that, so restore log separately.
+	old, oldW, oldF := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(old)
+		log.SetOutput(oldW)
+		log.SetFlags(oldF)
+	})
 
 	var buf bytes.Buffer
 	setLogOutput(&buf)
