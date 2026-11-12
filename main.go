@@ -36,7 +36,11 @@ func main() {
 		*logName = defLogName
 	}
 
-	p, err := gotsr.New()
+	pidFile, err := pidPath()
+	if err != nil {
+		log.Fatal(err)
+	}
+	p, err := gotsr.New(gotsr.WithPIDFile(pidFile))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -81,12 +85,14 @@ func main() {
 	}
 	defer f.Close()
 	log.SetOutput(f)
-	if err := supress(ctx, *interval, processes...); err != nil {
+	if err := supress(ctx, *interval, stateFiles(pidFile), processes...); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func supress(ctx context.Context, interval time.Duration, procNames ...string) error {
+// supress kills the processes named procNames every interval, and keeps the
+// files in keep fresh, until ctx is cancelled.
+func supress(ctx context.Context, interval time.Duration, keep []string, procNames ...string) error {
 	pm := make(map[string]bool, len(procNames))
 	for _, v := range procNames {
 		pm[v] = true
@@ -100,6 +106,7 @@ func supress(ctx context.Context, interval time.Duration, procNames ...string) e
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			touch(keep...)
 			if err := wipe(pm); err != nil {
 				slog.Error("wipe", "error", err)
 			}
