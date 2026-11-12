@@ -17,13 +17,12 @@ import (
 
 const (
 	defKillInterval = 5 * time.Second
-	defLogName      = "getgot.log"
 )
 
 var (
 	names    = flag.String("names", "jamf,Nudge,du", "comma separated list of process executable names to kill, case sensitive; names are matched as the kernel reports them (15 characters on Linux, 16 on macOS)")
 	interval = flag.Duration("every", defKillInterval, "interval to check for processes")
-	logName  = flag.String("log", defLogName, "log file name")
+	logName  = flag.String("log", "", "log file `path` (default <user cache dir>/getgot/getgot.log)")
 	stop     = flag.Bool("stop", false, "stop the getgot daemon")
 )
 
@@ -31,9 +30,6 @@ func main() {
 	flag.Parse()
 	if *interval <= 0*time.Second {
 		*interval = defKillInterval
-	}
-	if *logName == "" {
-		*logName = defLogName
 	}
 
 	pidFile, err := pidPath()
@@ -63,7 +59,10 @@ func main() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	p.AtExit(func() { cancel() }) // cancel the context before the process exits
+	p.AtExit(func() {
+		slog.Info("stopping")
+		cancel() // cancel the context before the process exits
+	})
 
 	// os.Executable resolves symlinks on Linux, while the kernel reports the
 	// name the program was started as, so reject both.
@@ -76,21 +75,29 @@ func main() {
 		log.Fatalf("invalid -names: %s", err)
 	}
 
+	// Open the log in every stage, before TSR, so that a bad path fails in
+	// the foreground, before the daemon is reported as started.
+	logFile, err := logPath(*logName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	f, err := openLog(logFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+
 	child, err := p.TSR()
 	if err != nil {
 		log.Fatal(err)
 	}
 	if !child {
-		slog.Info("starting getgot...")
+		slog.Info("starting getgot...", "log", logFile)
 		return
 	}
 
-	f, err := os.OpenFile(*logName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-	log.SetOutput(f)
+	setLogOutput(f)
+	slog.Info("started", "pid", os.Getpid(), "names", processes, "every", *interval)
 	if err := supress(ctx, *interval, stateFiles(pidFile), processes...); err != nil {
 		log.Fatal(err)
 	}
