@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 )
 
-// stateDir returns the per-user temporary directory.
+// stateDir returns getgot's directory in the temporary directory, which is
+// per-user by default (%TEMP% under the user profile).
 func stateDir() (string, error) {
 	return privateDir(filepath.Join(os.TempDir(), "getgot"))
 }

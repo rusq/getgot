@@ -17,11 +17,12 @@ func TestStateDir(t *testing.T) {
 	tmpName := "getgot-" + strconv.Itoa(os.Getuid())
 	tests := []struct {
 		name    string
-		xdg     bool                            // set XDG_RUNTIME_DIR to a temp directory
+		xdg     string                          // XDG_RUNTIME_DIR, "temp" for a temp directory
 		prepare func(t *testing.T, want string) // runs before stateDir
 		wantErr bool
 	}{
-		{name: "xdg runtime dir", xdg: true},
+		{name: "xdg runtime dir", xdg: "temp"},
+		{name: "relative xdg runtime dir is ignored", xdg: "run/user"},
 		{name: "temp dir fallback"},
 		{
 			name: "existing private dir is reused",
@@ -68,12 +69,13 @@ func TestStateDir(t *testing.T) {
 			tmp := t.TempDir()
 			t.Setenv("TMPDIR", tmp)
 			want := filepath.Join(tmp, tmpName)
-			if tt.xdg {
+			switch tt.xdg {
+			case "temp":
 				xdg := t.TempDir()
 				t.Setenv("XDG_RUNTIME_DIR", xdg)
 				want = filepath.Join(xdg, "getgot")
-			} else {
-				t.Setenv("XDG_RUNTIME_DIR", "")
+			default:
+				t.Setenv("XDG_RUNTIME_DIR", tt.xdg)
 			}
 			if tt.prepare != nil {
 				tt.prepare(t, want)
@@ -114,6 +116,25 @@ func (f fakeInfo) Mode() fs.FileMode  { return f.mode }
 func (f fakeInfo) ModTime() time.Time { return time.Time{} }
 func (f fakeInfo) IsDir() bool        { return f.mode.IsDir() }
 func (f fakeInfo) Sys() any           { return &syscall.Stat_t{Uid: f.uid} }
+
+func TestStateDirUmask(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	old := syscall.Umask(0o277)
+	defer syscall.Umask(old)
+	got, err := stateDir()
+	if err != nil {
+		t.Fatalf("stateDir() with umask 0277: %v", err)
+	}
+	fi, err := os.Lstat(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Errorf("mode = %#o, want 0700", fi.Mode().Perm())
+	}
+}
 
 func TestCheckPrivate(t *testing.T) {
 	me := uint32(os.Getuid())
