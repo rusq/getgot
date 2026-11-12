@@ -274,11 +274,21 @@ func TestLifecycle(t *testing.T) {
 				errs <- err
 			}()
 		}
+		var started, already int
 		for range n {
 			out, err := <-outs, <-errs
 			if err != nil {
 				t.Errorf("start: %v\n%s", err, out)
 			}
+			switch {
+			case strings.Contains(out, "already running"):
+				already++
+			case strings.Contains(out, "starting getgot"):
+				started++
+			}
+		}
+		if started != 1 || already != n-1 {
+			t.Errorf("%d launches started the daemon and %d found it running, want 1 and %d", started, already, n-1)
 		}
 		if e.daemonPID() == 0 {
 			t.Fatal("no daemon running")
