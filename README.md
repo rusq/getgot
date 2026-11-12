@@ -32,15 +32,23 @@ getgot -stop                         # stop it
 **The default `-names` list kills real system utilities** (including `du`).
 Always pass your own list.
 
+The messages below are printed to stderr with a timestamp and level, for
+example `WARN getgot already running`.  This section describes macOS and
+Linux; see [Platform notes](#platform-notes) for Windows.
+
 - **Start:** the launcher prints `starting getgot...` with the log path and
-  returns once the daemon is running.  Errors in the arguments or the log path
-  are reported in the foreground, before the daemon starts.
+  returns once the daemon is running.  Invalid arguments and an unusable log
+  path are reported in the foreground with a non-zero exit status, before the
+  daemon starts.
 - **Repeated start:** if a daemon is already running, getgot prints
-  `getgot already running` and exits with status 0.  The running daemon is not
-  touched.  Only one daemon runs per user, whichever directory it was started
-  from, even when several launches race.
-- **Stop:** `getgot -stop` sends `SIGTERM` to the daemon and waits for it to
-  exit, from any directory.  It prints `not running` if there is no daemon.
+  `getgot already running` and exits with status 0, leaving the running daemon
+  alone.  It keeps its own `-names`, `-every` and `-log`; to change them, stop
+  it and start again.  Only one daemon runs per user, whichever directory it
+  was started from, even when several launches race.  The arguments are still
+  validated first, so a repeated start with invalid arguments fails.
+- **Stop:** `getgot -stop` sends `SIGTERM` to the daemon and waits up to 30
+  seconds for it to exit, from any directory.  It prints `not running` if
+  there is no daemon.
 
 ### Process names
 
@@ -54,23 +62,37 @@ own executable name, and never kills its own process.
 
 ## Files
 
-| File                          | Linux                                   | macOS                       |
-|-------------------------------|-----------------------------------------|-----------------------------|
-| PID file `getgot.pid`         | `$XDG_RUNTIME_DIR/getgot/`, or `/tmp/getgot-<uid>/` | `$TMPDIR/getgot-<uid>/` |
-| Lock file `getgot.pid.lock`   | next to the PID file                    | next to the PID file        |
-| Log `getgot.log`              | `$XDG_CACHE_HOME/getgot/` or `~/.cache/getgot/` | `~/Library/Caches/getgot/` |
+| File                        | macOS and Linux                                                | Windows                  |
+|-----------------------------|----------------------------------------------------------------|--------------------------|
+| PID file `getgot.pid`       | `$XDG_RUNTIME_DIR/getgot/` if set, else `<tmp>/getgot-<uid>/`  | `%TEMP%\getgot\`         |
+| Lock file `getgot.pid.lock` | next to the PID file                                           | none                     |
+| Log `getgot.log`            | `~/Library/Caches/getgot/` (macOS), `$XDG_CACHE_HOME/getgot/` or `~/.cache/getgot/` (Linux) | `%LocalAppData%\getgot\` |
 
-- The state directory must be a private (`0700`) directory owned by you, not a
-  symlink; getgot refuses to start otherwise.  It must be on a local
-  filesystem.
+`<tmp>` is `$TMPDIR`, or `/tmp` if it is unset.  A relative `XDG_RUNTIME_DIR`
+is ignored.  Go's `os.UserCacheDir` decides the log directory; a relative
+`XDG_CACHE_HOME` or an unset `HOME` is an error.
+
+On macOS and Linux:
+
+- The state directory must be a directory owned by you with mode exactly
+  `0700`, not a symlink; getgot refuses to start otherwise.  It must be on a
+  local filesystem.
 - The running daemon is identified by an `fcntl` lock on `getgot.pid.lock`
   (see [gotsr](https://github.com/rusq/gotsr)), not by the PID in the PID file,
   so a stale PID file is harmless.  The lock file is never removed; this is
-  intentional.
+  intentional.  **Do not delete it while the daemon runs**, or a second daemon
+  can start.
 - The daemon touches its state files on every scan, so that temporary
   directory cleaners do not remove them.
-- The log is created with mode `0600`.  It records start, stop, every kill and
-  every failure.
+
+The log:
+
+- is created with mode `0600`; an existing log keeps its mode.  The default
+  directory is created with mode `0700`; the directory of a custom `-log` path
+  must exist.
+- records start, stop, every kill and every failure in the daemon.  Errors
+  before the daemon starts go to the terminal instead.
+- is appended to and never rotated.
 
 ## Platform notes
 
@@ -79,12 +101,19 @@ own executable name, and never kills its own process.
   context with a different environment, for example a launchd job without
   `TMPDIR`, uses a different directory and does not see a daemon started from
   a terminal.
-- On Linux, kills go through a pidfd, and the process name is checked again
-  after the handle is opened, so a process that reused the PID of a target is
-  never killed.  Elsewhere a very small window remains.
-- **Windows** support is experimental and comes from gotsr.  The PID file is
-  not locked, and the daemon answers status and stop requests on a
-  `127.0.0.1` TCP port that any local user can reach, so any local user can
-  stop it.
+- On Linux kernels with pidfd support, kills go through a pidfd, and the
+  process name is checked again after the handle is opened, so a process that
+  reused the PID of a target is never killed.  Elsewhere a very small window
+  remains.
+- **Windows** support is experimental and comes from gotsr:
+  - the PID file is not locked, and the state directory permissions are not
+    checked;
+  - a repeated start launches a second daemon instead of reporting
+    `getgot already running`;
+  - the daemon answers status and stop requests on a `127.0.0.1` TCP port that
+    any local user can reach, so any local user can stop it;
+  - `-stop` returns once the daemon acknowledges the request, without waiting
+    for it to exit, and fails with an error rather than `not running` if the
+    PID file is stale.
 - A daemon started by getgot v0.1.x is not recognised; stop it by hand before
   upgrading.
