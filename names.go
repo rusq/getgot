@@ -17,7 +17,7 @@ func commLimit(goos string) int {
 		return 15 // TASK_COMM_LEN - 1
 	case "darwin":
 		return 16 // MAXCOMLEN
-	case "freebsd", "dragonfly":
+	case "freebsd":
 		return 19 // COMMLEN
 	default:
 		return 0
@@ -26,15 +26,19 @@ func commLimit(goos string) int {
 
 // parseProcessNames splits the comma separated list s, trims spaces, and
 // removes duplicates, preserving order.  It rejects empty entries, names
-// longer than the platform limit, which would never match, and the name self
+// longer than the platform limit, which would never match, and the names self
 // of the getgot executable, so that getgot never kills its own instances.
-func parseProcessNames(s string, self string) ([]string, error) {
+func parseProcessNames(s string, self ...string) ([]string, error) {
 	if strings.TrimSpace(s) == "" {
 		return nil, errNoNames
 	}
 	limit := commLimit(runtime.GOOS)
-	if limit > 0 && len(self) > limit {
-		self = self[:limit]
+	isSelf := make(map[string]bool, len(self))
+	for _, name := range self {
+		if limit > 0 && len(name) > limit {
+			name = name[:limit]
+		}
+		isSelf[name] = true
 	}
 	var (
 		names []string
@@ -47,7 +51,7 @@ func parseProcessNames(s string, self string) ([]string, error) {
 			return nil, fmt.Errorf("entry %d is empty", i+1)
 		case limit > 0 && len(name) > limit:
 			return nil, fmt.Errorf("%q is longer than %d characters, and would never match on %s", name, limit, runtime.GOOS)
-		case name == self:
+		case isSelf[name]:
 			return nil, fmt.Errorf("%q is the getgot executable", name)
 		case seen[name]:
 			continue

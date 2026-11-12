@@ -65,11 +65,13 @@ func main() {
 	defer cancel()
 	p.AtExit(func() { cancel() }) // cancel the context before the process exits
 
+	// os.Executable resolves symlinks on Linux, while the kernel reports the
+	// name the program was started as, so reject both.
 	exe, err := os.Executable()
 	if err != nil {
 		log.Fatal(err)
 	}
-	processes, err := parseProcessNames(*names, filepath.Base(exe))
+	processes, err := parseProcessNames(*names, filepath.Base(exe), filepath.Base(os.Args[0]))
 	if err != nil {
 		log.Fatalf("invalid -names: %s", err)
 	}

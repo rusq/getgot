@@ -30,6 +30,7 @@ func TestParseProcessNames(t *testing.T) {
 		{name: "self", in: "foo,getgot", self: "getgot", wantAny: true},
 		{name: "self with spaces", in: " getgot ", self: "getgot", wantAny: true},
 		{name: "case sensitive", in: "GetGot", self: "getgot", want: []string{"GetGot"}},
+		{name: "windows executable", in: "getgot.exe", self: "getgot.exe", wantAny: true},
 		{name: "too long", in: "foo," + long, self: "getgot", wantAny: true, needLimit: true},
 	}
 	for _, tt := range tests {
@@ -67,6 +68,27 @@ func TestParseProcessNamesTruncatedSelf(t *testing.T) {
 	self := strings.Repeat("g", limit+5)
 	if got, err := parseProcessNames(self[:limit], self); err == nil {
 		t.Errorf("got %q, want an error for the truncated executable name", got)
+	}
+}
+
+func TestParseProcessNamesLimit(t *testing.T) {
+	limit := commLimit(runtime.GOOS)
+	if limit == 0 {
+		t.Skipf("no process name limit on %s", runtime.GOOS)
+	}
+	at := strings.Repeat("a", limit)
+	if _, err := parseProcessNames(at); err != nil {
+		t.Errorf("name of %d characters rejected: %v", limit, err)
+	}
+	if got, err := parseProcessNames(at + "a"); err == nil {
+		t.Errorf("name of %d characters accepted: %q", limit+1, got)
+	}
+}
+
+func TestParseProcessNamesSeveralSelf(t *testing.T) {
+	// the resolved executable and the name the program was started as.
+	if got, err := parseProcessNames("gg", "getgot", "gg"); err == nil {
+		t.Errorf("got %q, want an error for the argv[0] name", got)
 	}
 }
 
