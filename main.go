@@ -8,7 +8,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
-	"strings"
+	"path/filepath"
 	"time"
 
 	"github.com/mitchellh/go-ps"
@@ -21,7 +21,7 @@ const (
 )
 
 var (
-	names    = flag.String("names", "jamf,Nudge,du", "comma separated list of process executable names to kill, case sensitive")
+	names    = flag.String("names", "jamf,Nudge,du", "comma separated list of process executable names to kill, case sensitive; names are matched as the kernel reports them (15 characters on Linux, 16 on macOS)")
 	interval = flag.Duration("every", defKillInterval, "interval to check for processes")
 	logName  = flag.String("log", defLogName, "log file name")
 	stop     = flag.Bool("stop", false, "stop the getgot daemon")
@@ -65,9 +65,13 @@ func main() {
 	defer cancel()
 	p.AtExit(func() { cancel() }) // cancel the context before the process exits
 
-	processes := strings.Split(*names, ",")
-	if len(processes) == 0 {
-		log.Fatal("no processes to kill, -names is empty")
+	exe, err := os.Executable()
+	if err != nil {
+		log.Fatal(err)
+	}
+	processes, err := parseProcessNames(*names, filepath.Base(exe))
+	if err != nil {
+		log.Fatalf("invalid -names: %s", err)
 	}
 
 	child, err := p.TSR()
