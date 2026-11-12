@@ -15,6 +15,9 @@ import (
 
 const (
 	defKillInterval = 5 * time.Second
+	// shutdownTimeout is how long the daemon waits for gotsr to exit the
+	// process after the context is cancelled.
+	shutdownTimeout = 10 * time.Second
 )
 
 var (
@@ -95,14 +98,18 @@ func main() {
 
 	setLogOutput(f)
 	slog.Info("started", "pid", os.Getpid(), "names", processes, "every", *interval)
-	if err := supress(ctx, *interval, stateFiles(pidFile), processes...); err != nil {
-		log.Fatal(err)
-	}
+	supress(ctx, *interval, stateFiles(pidFile), processes...)
+	// The context is cancelled by the AtExit hook.  gotsr then releases the
+	// lock, removes the PID file and exits the process, so wait for it
+	// instead of returning, which would exit before it is done.
+	time.Sleep(shutdownTimeout)
+	slog.Error("gotsr did not exit the process", "timeout", shutdownTimeout)
+	os.Exit(1)
 }
 
 // supress kills the processes named procNames every interval, and keeps the
-// files in keep fresh, until ctx is cancelled.
-func supress(ctx context.Context, interval time.Duration, keep []string, procNames ...string) error {
+// files in keep fresh, until ctx is cancelled, which is a normal stop.
+func supress(ctx context.Context, interval time.Duration, keep []string, procNames ...string) {
 	pm := make(map[string]bool, len(procNames))
 	for _, v := range procNames {
 		pm[v] = true
@@ -114,7 +121,7 @@ func supress(ctx context.Context, interval time.Duration, keep []string, procNam
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return
 		case <-ticker.C:
 			touch(keep...)
 			if err := wipe(osSystem{}, pm); err != nil {
