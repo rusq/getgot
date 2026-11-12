@@ -28,21 +28,24 @@ Findings are ordered by severity. Line numbers refer to `main.go` at `v0.1.1`.
 - 2026-11-12: this document was revised against gotsr `v0.2.0`.
 - 2026-11-12: decided to move getgot to Go 1.27 to match gotsr `v0.2.0`
   (finding 9).
+- 2026-11-12: the fix plan was carried out in getgot PRs #3 to #10, one per
+  step, each reviewed before merge. Limitations accepted in review are listed
+  in the README and in the PR descriptions.
 
 ## Status against gotsr v0.2.0
 
-| # | Finding | Where it gets fixed |
-|---|---------|---------------------|
-| 1 | A second launch kills the running daemon | gotsr v0.2.0: upgrade only |
-| 2 | A stale PID file can signal an unrelated process | gotsr v0.2.0 on POSIX: upgrade only |
-| 3 | State depends on the working directory | getgot |
-| 4 | Simultaneous starts and the startup checks | getgot |
-| 5 | One failed kill stops the scan, and PIDs can be reused | getgot |
-| 6 | `-log` misses `slog` output and has a loose default | getgot |
-| 7 | Process names are parsed loosely | getgot |
-| 8 | Shutdown races with the main goroutine | getgot |
-| 9 | gotsr v0.2.0 requires Go 1.27 | decided: getgot moves to Go 1.27 |
-| 10 | Windows stop and status are unauthenticated | gotsr (known limitation) |
+| # | Finding | Where it gets fixed | Status |
+|---|---------|---------------------|--------|
+| 1 | A second launch kills the running daemon | gotsr v0.2.0: upgrade only | fixed, #3 |
+| 2 | A stale PID file can signal an unrelated process | gotsr v0.2.0 on POSIX: upgrade only | fixed, #3 |
+| 3 | State depends on the working directory | getgot | fixed, #4 |
+| 4 | Simultaneous starts and the startup checks | getgot | fixed, #7 |
+| 5 | One failed kill stops the scan, and PIDs can be reused | getgot | fixed, #8 |
+| 6 | `-log` misses `slog` output and has a loose default | getgot | fixed, #6 |
+| 7 | Process names are parsed loosely | getgot | fixed, #5 |
+| 8 | Shutdown races with the main goroutine | getgot | fixed, #9 |
+| 9 | gotsr v0.2.0 requires Go 1.27 | decided: getgot moves to Go 1.27 | done, #3 |
+| 10 | Windows stop and status are unauthenticated | gotsr (known limitation) | documented in README, #10 |
 
 ## Findings
 
