@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/mitchellh/go-ps"
 	"github.com/rusq/gotsr"
 )
 
@@ -119,32 +117,9 @@ func supress(ctx context.Context, interval time.Duration, keep []string, procNam
 			return ctx.Err()
 		case <-ticker.C:
 			touch(keep...)
-			if err := wipe(pm); err != nil {
+			if err := wipe(osSystem{}, pm); err != nil {
 				slog.Error("wipe", "error", err)
 			}
 		}
 	}
-}
-
-// wipe kills all processes in the pm map
-func wipe(pm map[string]bool) error {
-	pp, err := ps.Processes()
-	if err != nil {
-		return fmt.Errorf("error listing processes: %w", err)
-	}
-
-	for _, p := range pp {
-		if _, ok := pm[p.Executable()]; !ok {
-			continue
-		}
-		proc, err := os.FindProcess(p.Pid())
-		if err != nil {
-			return fmt.Errorf("unable to find process %d: %w", p.Pid(), err)
-		}
-		if err := proc.Kill(); err != nil {
-			return fmt.Errorf("failed to kill %s: %w", p.Executable(), err)
-		}
-		slog.Info("killed", "executable", p.Executable(), "pid", p.Pid(), "ppid", p.PPid())
-	}
-	return nil
 }
