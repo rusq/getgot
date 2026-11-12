@@ -51,12 +51,6 @@ func main() {
 		slog.Info("terminated")
 		return
 	}
-	if running, err := p.IsRunning(); err != nil {
-		log.Fatal(err)
-	} else if running {
-		slog.Warn("getgot already running")
-		return
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p.AtExit(func() {
@@ -87,8 +81,13 @@ func main() {
 	}
 	defer f.Close()
 
+	// TSR checks the lock in every stage.  A launch that loses a race with
+	// another launch also gets ErrAlreadyRunning.
 	child, err := p.TSR()
-	if err != nil {
+	if errors.Is(err, gotsr.ErrAlreadyRunning) {
+		slog.Warn("getgot already running")
+		return
+	} else if err != nil {
 		log.Fatal(err)
 	}
 	if !child {
