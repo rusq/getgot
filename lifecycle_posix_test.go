@@ -339,6 +339,28 @@ func TestLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("clean shutdown", func(t *testing.T) {
+		e := newEnv(t, bin)
+		out, err := e.start()
+		mustSucceed(t, "start", out, err)
+		out, err = e.run("-stop")
+		mustSucceed(t, "stop", out, err)
+		log := e.log()
+		for _, want := range []string{"msg=started", "msg=stopping"} {
+			if !strings.Contains(log, want) {
+				t.Errorf("log does not contain %q:\n%s", want, log)
+			}
+		}
+		for _, bad := range []string{"context canceled", "level=ERROR"} {
+			if strings.Contains(log, bad) {
+				t.Errorf("log contains %q:\n%s", bad, log)
+			}
+		}
+		if _, err := os.Stat(e.pidFile); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("PID file left after stop: %v", err)
+		}
+	})
+
 	t.Run("stale PID file signals nobody", func(t *testing.T) {
 		e := newEnv(t, bin)
 		victim := e.helper(uniqueName(t, "ggv"))
