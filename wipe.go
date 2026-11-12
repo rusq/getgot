@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 
@@ -85,7 +86,9 @@ func kill(sys system, pid int, name string) (bool, error) {
 	defer h.Release()
 
 	again, err := sys.Lookup(pid)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil // exited while it was being looked up
+	} else if err != nil {
 		return false, err
 	}
 	if again == nil || again.Executable() != name {
