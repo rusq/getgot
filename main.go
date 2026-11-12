@@ -36,7 +36,11 @@ func main() {
 		*logName = defLogName
 	}
 
-	p, err := gotsr.New()
+	pidFile, err := pidPath()
+	if err != nil {
+		log.Fatal(err)
+	}
+	p, err := gotsr.New(gotsr.WithPIDFile(pidFile))
 	if err != nil {
 		log.Fatal(err)
 	}
